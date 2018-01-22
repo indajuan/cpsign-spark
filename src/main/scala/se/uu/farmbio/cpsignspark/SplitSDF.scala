@@ -1,4 +1,4 @@
-package cpsignspark
+package se.uu.farmbio.cpsignspark
 
 import java.io._
 import java.io.ByteArrayInputStream
@@ -20,7 +20,6 @@ import org.apache.spark.sql.SparkSession
 
 case class DS(fileName: String, isTrain: Boolean, data: String)
 
-
 object SplitSDF {
 
   def main(args: Array[String]) {
@@ -32,12 +31,15 @@ object SplitSDF {
     val sc = new SparkContext(conf)
 
     val sqlContext = new SQLContext(sc)
-    
+
     // val sqlContext = new org.apache.spark.sql.SQLContext(sc)
     import sqlContext._
     import sqlContext.implicits._
-    
-    
+
+    val inputFolder = args(0)
+    val outputFolder = args(1)
+    val splitRatio = args(2).toFloat
+
     // Convert a List[IAtomContainer] object to string in SDF format
     def toSDF(mols: List[IAtomContainer]): String = {
       val strWriter = new StringWriter()
@@ -54,7 +56,7 @@ object SplitSDF {
     // Define a case class DS
 
     // Create a RDD[DS]
-    val wholeSDFs = sc.wholeTextFiles("data/") //read all the files in directory "data/"
+    val wholeSDFs = sc.wholeTextFiles(inputFolder) //read all the files in directory "data/"
       .flatMap { //"flat" the two objects train and test into one RDD
         case (fileName, sdfs) => //cas(fileName, sdfs)   conserves the filename read at wholeTextFile
           val sdfByteArray = sdfs
@@ -68,12 +70,10 @@ object SplitSDF {
           val posMols = mols.filter(_.getProperty("class") == "1").toList // filter class = 1
           val negMols = mols.filter(_.getProperty("class") == "-1").toList // filter class = -1
 
-          val splitSize = 0.8f // define proportion of training examples
-
           val (posTrain, posTest) = Random.shuffle(posMols.toList)
-            .splitAt(Math.round(posMols.length * splitSize)) // shuffle the positive examples and split them
+            .splitAt(Math.round(posMols.length * splitRatio)) // shuffle the positive examples and split them
           val (negTrain, negTest) = Random.shuffle(negMols.toList)
-            .splitAt(Math.round(negMols.length * splitSize)) // shuffle the negative examples and split them
+            .splitAt(Math.round(negMols.length * splitRatio)) // shuffle the negative examples and split them
 
           val trainSet = Random.shuffle(posTrain ++ negTrain) // put together pos and neg training and shuffle
           val testSet = Random.shuffle(posTest ++ negTest) // put together pos and neg test and shuffle
@@ -82,7 +82,8 @@ object SplitSDF {
             DS(fileName, false, toSDF(testSet)))
       }
 
-    wholeSDFs.toDF.write.json("out/sdfDF.json")    
-    
+    wholeSDFs.toDF.write.format("json").mode("overwrite").save(outputFolder)
+    sc.stop()
+
   }
 }
