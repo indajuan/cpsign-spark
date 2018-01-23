@@ -22,29 +22,43 @@ import org.scalatest.FunSuite
 import scala.collection.mutable.Stack
 import org.apache.spark.sql.execution.datasources.text.TextFileFormat
 
-
-
-
 object testSplit extends FunSuite {
 
   val conf = new SparkConf()
     .setAppName("testSplit")
     .setMaster("local")
+
   val sc = new SparkContext(conf)
-  val sqlContext = new SQLContext(sc)
-  import sqlContext._
-  import sqlContext.implicits._
+  
+  //val sqlContext = new SQLContext(sc)
+  //import sqlContext._
+  //import sqlContext.implicits._
+
+  val spark = SparkSession
+    .builder()
+    .appName("testSplit")
+    .config("spark.some.config.option", "some-value")
+    .getOrCreate()
+    
+  import spark.implicits._
 
   test("	correct split is done if output file and benchmark file are the same") {
+
+    SplitSDF.main(Array("src/test/resources/input", "src/test/resources/100", "0.8", "100"))
+
+    SplitSDF.main(Array("src/test/resources/input", "src/test/resources/250", "0.8", "250"))
     
-    SplitSDF.main(Array("src/test/resources/input", "src/test/resources/tmp/100", "0.8", "100"))
-    SplitSDF.main(Array("src/test/resources/input", "src/test/resources/tmp/250", "0.8", "250"))
-    val seed100 = sqlContext.read.json("src/test/resources/seed100.json").as[DS]
-    val seed250 = sqlContext.read.json("src/test/resources/seed250.json").as[DS]
-    val t100 = sqlContext.read.option("mergeSchema","true").parquet("src/test/resources/tmp/100").as[DS]
-    val t250 = sqlContext.read.option("mergeSchema","true").parquet("src/test/resources/tmp/250").as[DS]
-    assert(seed100.except(t100).union(t100.except(seed100)).count() === 1)
+    val seed100 = spark.read.json("src/test/resources/seed100.json").as[DS]
+
+    val seed250 = spark.read.json("src/test/resources/seed250.json").as[DS]
+
+    val t100 = spark.read.json("src/test/resources/100/*.json").as[DS]
+
+    val t250 = spark.read.json("src/test/resources/250/*.json").as[DS]
+
+    assert(seed100.except(t100).union(t100.except(seed100)).count() === 0)
     assert(seed250.except(t250).union(t250.except(seed250)).count() === 0)
+
   }
 
 }

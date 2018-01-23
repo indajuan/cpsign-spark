@@ -30,11 +30,19 @@ object SplitSDF {
 
     val sc = new SparkContext(conf)
 
-    val sqlContext = new SQLContext(sc)
+    val spark = SparkSession
+      .builder()
+      .appName("SplitSDF")
+      .config("spark.some.config.option", "some-value")
+      .getOrCreate()
+
+    import spark.implicits._
+
+    //val sqlContext = new SQLContext(sc)
 
     // val sqlContext = new org.apache.spark.sql.SQLContext(sc)
-    import sqlContext._
-    import sqlContext.implicits._
+    //import sqlContext._
+    //import sqlContext.implicits._
 
     val inputFolder = args(0)
     val outputFolder = args(1)
