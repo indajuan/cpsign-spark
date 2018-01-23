@@ -1,4 +1,6 @@
 package se.uu.farmbio.cpsignspark
+
+
 import org.scalatest.BeforeAndAfterAll
 
 import java.io._
@@ -44,9 +46,17 @@ class testSplit extends FunSuite {
     import spark.implicits._
 
     val seed100 = spark.read.json("src/test/resources/seed100.json").as[DS]
+    .map(ds => (ds.fileName,ds.isTrain,ds.data.split("\n").map(z => if (z.contains("CDK  ")) "" else z)
+        .mkString("\n")))
     val seed250 = spark.read.json("src/test/resources/seed250.json").as[DS]
+    .map(ds => (ds.fileName,ds.isTrain,ds.data.split("\n").map(z => if (z.contains("CDK  ")) "" else z)
+        .mkString("\n")))
     val t100 = spark.read.json("src/test/resources/100/*.json").as[DS]
+    .map(ds => (ds.fileName,ds.isTrain,ds.data.split("\n").map(z => if (z.contains("CDK  ")) "" else z)
+        .mkString("\n")))
     val t250 = spark.read.json("src/test/resources/250/*.json").as[DS]
+    .map(ds => (ds.fileName,ds.isTrain,ds.data.split("\n").map(z => if (z.contains("CDK  ")) "" else z)
+        .mkString("\n")))
 
 
     assert(seed100.except(t100).union(t100.except(seed100)).count() === 0)
