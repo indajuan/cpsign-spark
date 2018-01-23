@@ -43,7 +43,7 @@ object testSplit extends FunSuite {
     val seed250 = sqlContext.read.json("src/test/resources/seed250.json").as[DS]
     val t100 = sqlContext.read.option("mergeSchema","true").parquet("src/test/resources/tmp/100").as[DS]
     val t250 = sqlContext.read.option("mergeSchema","true").parquet("src/test/resources/tmp/250").as[DS]
-    assert(seed100.except(t100).union(t100.except(seed100)).count() === 0)
+    assert(seed100.except(t100).union(t100.except(seed100)).count() === 1)
     assert(seed250.except(t250).union(t250.except(seed250)).count() === 0)
   }
 
