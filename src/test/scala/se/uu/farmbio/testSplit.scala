@@ -29,7 +29,7 @@ object testSplit extends FunSuite {
     .setMaster("local")
 
   val sc = new SparkContext(conf)
-  
+
   //val sqlContext = new SQLContext(sc)
   //import sqlContext._
   //import sqlContext.implicits._
@@ -39,7 +39,7 @@ object testSplit extends FunSuite {
     .appName("testSplit")
     .config("spark.some.config.option", "some-value")
     .getOrCreate()
-    
+
   import spark.implicits._
 
   test("	correct split is done if output file and benchmark file are the same") {
@@ -47,7 +47,7 @@ object testSplit extends FunSuite {
     SplitSDF.main(Array("src/test/resources/input", "src/test/resources/100", "0.8", "100"))
 
     SplitSDF.main(Array("src/test/resources/input", "src/test/resources/250", "0.8", "250"))
-    
+
     val seed100 = spark.read.json("src/test/resources/seed100.json").as[DS]
 
     val seed250 = spark.read.json("src/test/resources/seed250.json").as[DS]
@@ -61,4 +61,5 @@ object testSplit extends FunSuite {
 
   }
 
+  sc.stop()
 }

@@ -90,8 +90,10 @@ object SplitSDF {
             DS(fileName, false, toSDF(testSet)))
       }
 
-    wholeSDFs.toDF.write.format("json").mode("overwrite").save(outputFolder)
-    sc.stop()
+      wholeSDFs.toDF.write.format("json").mode("overwrite").save(outputFolder)
+      
+      sc.stop()
+      
 
-  }
+    }
 }
