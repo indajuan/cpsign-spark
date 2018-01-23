@@ -1,4 +1,5 @@
 package se.uu.farmbio.cpsignspark
+import org.scalatest.BeforeAndAfterAll
 
 import java.io._
 import java.io.ByteArrayInputStream
@@ -22,44 +23,36 @@ import org.scalatest.FunSuite
 import scala.collection.mutable.Stack
 import org.apache.spark.sql.execution.datasources.text.TextFileFormat
 
-object testSplit extends FunSuite {
+class testSplit extends FunSuite {
 
-  val conf = new SparkConf()
-    .setAppName("testSplit")
-    .setMaster("local")
+  test("	correct split is done if output file and benchmark file are the same") {
+    SplitSDF.main(Array("src/test/resources/input", "src/test/resources/100", "0.8", "100"))
+    SplitSDF.main(Array("src/test/resources/input", "src/test/resources/250", "0.8", "250"))
 
-  val sc = new SparkContext(conf)
+    val conf = new SparkConf()
+      .setAppName("testSplit")
+      .setMaster("local")
 
-  //val sqlContext = new SQLContext(sc)
-  //import sqlContext._
-  //import sqlContext.implicits._
+    val sc = new SparkContext(conf)
 
-  val spark = SparkSession
+    val spark = SparkSession
     .builder()
     .appName("testSplit")
     .config("spark.some.config.option", "some-value")
     .getOrCreate()
 
-  import spark.implicits._
-
-  test("	correct split is done if output file and benchmark file are the same") {
-
-    SplitSDF.main(Array("src/test/resources/input", "src/test/resources/100", "0.8", "100"))
-
-    SplitSDF.main(Array("src/test/resources/input", "src/test/resources/250", "0.8", "250"))
+    import spark.implicits._
 
     val seed100 = spark.read.json("src/test/resources/seed100.json").as[DS]
-
     val seed250 = spark.read.json("src/test/resources/seed250.json").as[DS]
-
     val t100 = spark.read.json("src/test/resources/100/*.json").as[DS]
-
     val t250 = spark.read.json("src/test/resources/250/*.json").as[DS]
+
 
     assert(seed100.except(t100).union(t100.except(seed100)).count() === 0)
     assert(seed250.except(t250).union(t250.except(seed250)).count() === 0)
-
+    sc.stop()
   }
 
-  sc.stop()
 }
+

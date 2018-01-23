@@ -47,6 +47,7 @@ object SplitSDF {
     val inputFolder = args(0)
     val outputFolder = args(1)
     val splitRatio = args(2).toFloat
+    val seedInput = args(3).toInt
 
     // Convert a List[IAtomContainer] object to string in SDF format
     def toSDF(mols: List[IAtomContainer]): String = {
@@ -55,6 +56,7 @@ object SplitSDF {
       val molsIt = mols.iterator
       while (molsIt.hasNext()) {
         val mol = molsIt.next
+        mol.removeProperty("cdk:Remark")
         writer.write(mol)
       }
       writer.close
@@ -77,14 +79,19 @@ object SplitSDF {
 
           val posMols = mols.filter(_.getProperty("class") == "1").toList // filter class = 1
           val negMols = mols.filter(_.getProperty("class") == "-1").toList // filter class = -1
-
+          
+          Random.setSeed(seedInput)
           val (posTrain, posTest) = Random.shuffle(posMols.toList)
             .splitAt(Math.round(posMols.length * splitRatio)) // shuffle the positive examples and split them
+          
+          Random.setSeed(seedInput)
           val (negTrain, negTest) = Random.shuffle(negMols.toList)
             .splitAt(Math.round(negMols.length * splitRatio)) // shuffle the negative examples and split them
 
+          
           val trainSet = Random.shuffle(posTrain ++ negTrain) // put together pos and neg training and shuffle
           val testSet = Random.shuffle(posTest ++ negTest) // put together pos and neg test and shuffle
+          
           Seq(
             DS(fileName, true, toSDF(trainSet)),
             DS(fileName, false, toSDF(testSet)))
