@@ -29,11 +29,13 @@ object SplitSDF {
       .setMaster("local")
 
     val sc = new SparkContext(conf)
+    
+    sc.setLogLevel("WARN")
 
     val spark = SparkSession
       .builder()
       .appName("SplitSDF")
-      .config("spark.some.config.option", "some-value")
+      .config("", "")
       .getOrCreate()
 
     import spark.implicits._

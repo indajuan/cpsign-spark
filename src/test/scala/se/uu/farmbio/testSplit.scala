@@ -45,7 +45,7 @@ class testSplit extends FunSuite {
     val spark = SparkSession
     .builder()
     .appName("testSplit")
-    .config("spark.some.config.option", "some-value")
+    .config("", "")
     .getOrCreate()
 
     import spark.implicits._
