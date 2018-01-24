@@ -32,7 +32,7 @@ import org.scalatest.junit.JUnitRunner
 @RunWith(classOf[JUnitRunner])
 class testSplit extends FunSuite {
 
-  test("	correct split is done if output file and benchmark file are the same") {
+test("	correct split is done if output file and benchmark file are the same") {
     SplitSDF.main(Array("src/test/resources/input", "src/test/resources/100", "0.8", "100"))
     SplitSDF.main(Array("src/test/resources/input", "src/test/resources/250", "0.8", "250"))
 
@@ -42,6 +42,8 @@ class testSplit extends FunSuite {
 
     val sc = new SparkContext(conf)
 
+    sc.setLogLevel("WARN")
+    
     val spark = SparkSession
     .builder()
     .appName("testSplit")
@@ -63,9 +65,13 @@ class testSplit extends FunSuite {
     .map(ds => (ds.fileName,ds.isTrain,ds.data.split("\\\\n").map(z => if (z.contains("CDK  ")) "" else z)
         .mkString("\n")))
 
-
-    assert(seed100.except(t100).union(t100.except(seed100)).count() === 0)
-    assert(seed250.except(t250).union(t250.except(seed250)).count() === 0)
+    val diff100 =  seed100.except(t100).union(t100.except(seed100)).count()
+    println("\nNumber of non matching elements with seed=100:\t" + diff100.toString)
+    val diff250 = seed250.except(t250).union(t250.except(seed250)).count()
+    println("\nNumber of non matching elements with seed=250:\t" + diff250.toString)        
+    
+    assert(diff100 === 0)
+    assert(diff250 === 0)
     sc.stop()
   }
 
