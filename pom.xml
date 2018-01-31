@@ -110,7 +110,7 @@
 					<useFile>false</useFile>
 					<disableXmlReport>true</disableXmlReport>
 					<includes>
-						<include>**/*Test.*</include>
+						<include>**/*test.*</include>
 						<include>**/*Suite.*</include>
 					</includes>
 					<excludes>
