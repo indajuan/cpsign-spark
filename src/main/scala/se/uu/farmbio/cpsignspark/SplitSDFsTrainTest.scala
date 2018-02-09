@@ -88,7 +88,7 @@ object SplitSDFsTrainTest {
           val testSet = Random.shuffle(posTest ++ negTest) // put together pos and neg test and shuffle
           
           Seq(
-            DSTrTe(fileName.split("/").last, toSDF(trainSet), toSDF(testSet)))
+            DSTrTe(fileName.split(inputFolder+"/").last, toSDF(trainSet), toSDF(testSet)))
       }.toDF.write.format("json").mode("overwrite").save(outputFolder)
 
        
@@ -96,7 +96,34 @@ object SplitSDFsTrainTest {
     }  
 }
 
+// If you want to print each SDF file to different output files 
+//.toDF
 
+//    def convertRowToJSON(row: Row): String = {
+//      val m = row.getValuesMap(row.schema.fieldNames)
+//      JSONObject(m).toString()
+//    }
+    
+//    wholeSDFs.select($"fileName",$"Train").foreach{
+//     z => {
+//       val n = z(0)
+//       val x = convertRowToJSON(z)
+//       val file = new File(outputFolder+"/"+n+".train")
+//       val bw = new BufferedWriter(new FileWriter(file))
+//        bw.write(x)
+//        bw.close()
+//     }  }
+//    wholeSDFs.select($"fileName",$"Test").foreach{
+//     z => {
+//       val n = z(0)
+//       val x = convertRowToJSON(z)
+//       val file = new File(outputFolder+"/"+n+".test")
+//       val bw = new BufferedWriter(new FileWriter(file))
+//        bw.write(x)
+//        bw.close()
+//     }  }
+    
+// To run 
 // src/test/resources/input src/test2/250 0.8 250
 //../../db/sdf/ ../../db/split1001 0.8 1001
 

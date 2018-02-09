@@ -49,7 +49,7 @@ class testSplitTrainTest extends FunSuite {
 
     import spark.implicits._
 
-    val seed250 = spark.read.json("src/test/resources/seed250TrainTest.json").as[DSTrTe]
+    val seed250 = spark.read.json("src/test/resources/seed250.json").as[DSTrTe]
       .map(ds => (ds.fileName,ds
           .Train
           .split("\\n").map(z => if (z.contains("CDK  ")) "" else z)
