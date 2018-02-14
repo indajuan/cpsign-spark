@@ -31,7 +31,7 @@ import org.scalatest.junit.JUnitRunner
 class testSplitTrainTest extends FunSuite {
 
   test("	correct split is done if output file and benchmark file are the same") {
-    SplitSDFsTrainTest.main(Array("src/test/resources/input", "src/test/resources/250TrainTest", "0.8", "250"))
+    SplitSDFsTrainTest.main(Array("src/test/resources/input", "src/test/resources/250TrainTest", "0.8", "250", "local", "none"))
 
     val conf = new SparkConf()
       .setAppName("testSplitTrainTest")

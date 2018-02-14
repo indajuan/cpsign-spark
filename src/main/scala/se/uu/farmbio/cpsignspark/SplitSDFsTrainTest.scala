@@ -22,14 +22,24 @@ case class DSTrTe(fileName: String, Train: String, Test: String)
 
 object SplitSDFsTrainTest {
   def main(args: Array[String]) {
+    val inputFolder = args(0)
+    val outputFolder = args(1)
+    val splitRatio = args(2).toFloat
+    val seedInput = args(3).toInt
 
-    val conf = new SparkConf()
-      .setAppName("SplitterTestTrain")
-      .setMaster("local")
-
-    val sc = new SparkContext(conf)
+    val sparkmaster = args(4) 
+    val conf = new SparkConf().setAppName("SplitterTestTrain")
+    if (sparkmaster == "local") {
+      conf.setMaster("local")
+    }
     
-    sc.setLogLevel("WARN")
+    
+        
+    val sc = new SparkContext(conf) 
+    if (args(5) != "none") sc.addJar(args(5))  
+    
+    sc.setLogLevel("WARN") 
+         
 
     val spark = SparkSession
       .builder()
@@ -39,10 +49,6 @@ object SplitSDFsTrainTest {
 
     import spark.implicits._
 
-    val inputFolder = args(0)
-    val outputFolder = args(1)
-    val splitRatio = args(2).toFloat
-    val seedInput = args(3).toInt
 
     // Convert a List[IAtomContainer] object to string in SDF format
     def toSDF(mols: List[IAtomContainer]): String = {
@@ -58,20 +64,18 @@ object SplitSDFsTrainTest {
       strWriter.toString()
     }
 
-    // Define a case class DS
+
 
     // Create a RDD[DS]
     val wholeSDFs = sc.wholeTextFiles(inputFolder) //read all the files in directory "data/"
       .flatMap { //"flat" the two objects train and test into one RDD
         case (fileName, sdfs) => //cas(fileName, sdfs)   conserves the filename read at wholeTextFile
-          val sdfByteArray = sdfs
-            .getBytes(Charset.forName("UTF-8"))
+          val sdfByteArray = sdfs.getBytes(Charset.forName("UTF-8"))
           val sdfIS = new ByteArrayInputStream(sdfByteArray) //Parse SDF
           val reader = new MDLV2000Reader(sdfIS)
           val chemFile = reader.read(new ChemFile)
           val mols = ChemFileManipulator.getAllAtomContainers(chemFile)
           reader.close
-
           val posMols = mols.filter(_.getProperty("class") == "1").toList // filter class = 1
           val negMols = mols.filter(_.getProperty("class") == "-1").toList // filter class = -1
           
@@ -84,7 +88,7 @@ object SplitSDFsTrainTest {
             .splitAt(Math.round(negMols.length * splitRatio)) // shuffle the negative examples and split them
 
           
-          val trainSet = Random.shuffle(posTrain ++ negTrain) // put together pos and neg training and shuffle
+          val trainSet = Random.shuffle(posTrain ++ negTrain) // put together pos and neg training   and shuffle
           val testSet = Random.shuffle(posTest ++ negTest) // put together pos and neg test and shuffle
           
           Seq(
