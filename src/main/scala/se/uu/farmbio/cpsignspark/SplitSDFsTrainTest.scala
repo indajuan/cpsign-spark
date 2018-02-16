@@ -18,7 +18,8 @@ import org.openscience.cdk.tools.manipulator.ChemFileManipulator
 import org.apache.spark.sql.SQLContext
 import org.apache.spark.sql.SparkSession
 
-case class DSTrTe(fileName: String, Train: String, Test: String)
+case class DSTrTe(fileName: String, Train: Boolean, sdfs: List[IAtomContainer])
+case class DS1(fileName: String, Train: Boolean, SDFs: String)
 
 object SplitSDFsTrainTest {
   def main(args: Array[String]) {
@@ -26,78 +27,66 @@ object SplitSDFsTrainTest {
     val outputFolder = args(1)
     val splitRatio = args(2).toFloat
     val seedInput = args(3).toInt
+    val sparkmaster = args(4)
+    val swiftOpenstack = args(5)
+    val numberOfSplits = args(6).toInt
 
-    val sparkmaster = args(4) 
     val conf = new SparkConf().setAppName("SplitterTestTrain")
-    if (sparkmaster == "local") {
-      conf.setMaster("local")
-    }
-    
-    
-        
-    val sc = new SparkContext(conf) 
-    if (args(5) != "none") sc.addJar(args(5))  
-    
-    sc.setLogLevel("WARN") 
-         
+    if (sparkmaster == "local") conf.setMaster("local")
 
-    val spark = SparkSession
-      .builder()
-      .appName("SplitSDFTrainTest")
-      .config("", "")
-      .getOrCreate()
+    val sc = new SparkContext(conf)
+    if (swiftOpenstack != "none") sc.addJar(args(5))
+
+    sc.setLogLevel("WARN")
+
+    val spark = SparkSession.builder().appName("SplitTrainTest").config("", "").getOrCreate()
 
     import spark.implicits._
 
+    //read all the files in directory
+    val wholeSDFs = sc.wholeTextFiles(inputFolder, numberOfSplits) 
+        
 
     // Convert a List[IAtomContainer] object to string in SDF format
-    def toSDF(mols: List[IAtomContainer]): String = {
+    def toSDF(mols: IAtomContainer): String = {
       val strWriter = new StringWriter()
       val writer = new SDFWriter(strWriter)
-      val molsIt = mols.iterator
-      while (molsIt.hasNext()) {
-        val mol = molsIt.next
-        mol.removeProperty("cdk:Remark")
-        writer.write(mol)
-      }
+      mols.removeProperty("cdk:Remark")
+      writer.write(mols)
       writer.close
       strWriter.toString()
     }
 
-
-
     // Create a RDD[DS]
-    val wholeSDFs = sc.wholeTextFiles(inputFolder) //read all the files in directory "data/"
-      .flatMap { //"flat" the two objects train and test into one RDD
-        case (fileName, sdfs) => //cas(fileName, sdfs)   conserves the filename read at wholeTextFile
-          val sdfByteArray = sdfs.getBytes(Charset.forName("UTF-8"))
-          val sdfIS = new ByteArrayInputStream(sdfByteArray) //Parse SDF
-          val reader = new MDLV2000Reader(sdfIS)
-          val chemFile = reader.read(new ChemFile)
-          val mols = ChemFileManipulator.getAllAtomContainers(chemFile)
-          reader.close
-          val posMols = mols.filter(_.getProperty("class") == "1").toList // filter class = 1
-          val negMols = mols.filter(_.getProperty("class") == "-1").toList // filter class = -1
-          
-          Random.setSeed(seedInput)
-          val (posTrain, posTest) = Random.shuffle(posMols.toList)
-            .splitAt(Math.round(posMols.length * splitRatio)) // shuffle the positive examples and split them
-          
-          Random.setSeed(seedInput)
-          val (negTrain, negTest) = Random.shuffle(negMols.toList)
-            .splitAt(Math.round(negMols.length * splitRatio)) // shuffle the negative examples and split them
+    println(wholeSDFs.partitions.size)
+    
+    val cdks = wholeSDFs.flatMap { 
+      case (fileName, sdfs) => 
+        val sdfByteArray = sdfs.getBytes(Charset.forName("UTF-8"))
+        val sdfIS = new ByteArrayInputStream(sdfByteArray) //Parse SDF
+        val reader = new MDLV2000Reader(sdfIS)
+        val chemFile = reader.read(new ChemFile)
+        val mols1 = ChemFileManipulator.getAllAtomContainers(chemFile)
+        reader.close
+        Random.setSeed(seedInput)
+        val mols = Random.shuffle(mols1.toList)
+        val posMols = mols.filter(_.getProperty("class") == "1").toList 
+        val negMols = mols.filter(_.getProperty("class") == "-1").toList
 
-          
-          val trainSet = Random.shuffle(posTrain ++ negTrain) // put together pos and neg training   and shuffle
-          val testSet = Random.shuffle(posTest ++ negTest) // put together pos and neg test and shuffle
-          
-          Seq(
-            DSTrTe(fileName.split(inputFolder+"/").last, toSDF(trainSet), toSDF(testSet)))
-      }.toDF.write.format("json").mode("overwrite").save(outputFolder)
+        val (posTrain, posTest) = posMols.toList
+          .splitAt(Math.round(posMols.length * splitRatio))
 
-       
-      sc.stop()
-    }  
+        val (negTrain, negTest) = negMols.toList
+          .splitAt(Math.round(negMols.length * splitRatio))
+
+        Seq(
+          DSTrTe(fileName.split(inputFolder + "/").last, true , posTrain ++ negTrain),
+          DSTrTe(fileName.split(inputFolder + "/").last, false, posTest ++ negTest))
+    }
+    cdks.flatMap(t => t.sdfs.map(z => DS1(t.fileName, t.Train, toSDF(z))))
+      .toDF.write.format("json").mode("overwrite").save(outputFolder)
+    sc.stop()
+  }
 }
 
 // If you want to print each SDF file to different output files 
@@ -127,7 +116,8 @@ object SplitSDFsTrainTest {
 //        bw.close()
 //     }  }
     
-// To run 
-// src/test/resources/input src/test2/250 0.8 250
-//../../db/sdf/ ../../db/split1001 0.8 1001
+// To run:
+// <input dir src/test/resources/input> <output dir <src/test/resources/output>\
+// <splitratio 0.8> <seed 250> <master local> <jar added none> <numberOfSplits 1>
+// need to shuffle before submitting to cpsign or ML algorithm 
 

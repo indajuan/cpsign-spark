@@ -27,11 +27,12 @@ import org.apache.spark.sql.execution.datasources.text.TextFileFormat
 import org.junit.runner.RunWith
 import org.scalatest.junit.JUnitRunner
 
-@RunWith(classOf[JUnitRunner])
-class testSplitTrainTest extends FunSuite {
 
+
+@RunWith(classOf[JUnitRunner])
+class testTrainTest extends FunSuite{
   test("	correct split is done if output file and benchmark file are the same") {
-    SplitSDFsTrainTest.main(Array("src/test/resources/input", "src/test/resources/CDK", "0.8", "250", "local", "none", "1"))
+    SplitTrainTest.main(Array("src/test/resources/input", "src/test/resources/string", "0.8", "250", "local", "none", "1"))
 
     val conf = new SparkConf()
       .setAppName("testSplitTrainTest")
@@ -49,24 +50,9 @@ class testSplitTrainTest extends FunSuite {
 
     import spark.implicits._
 
-    val seed250 = spark.read.json("src/test/resources/250-CDK.json").as[DS1]
-      .map(ds => (ds.fileName,ds
-          .SDFs
-          .split("\\n").map(z => if (z.contains("CDK  ")) "" else z)
-        .mkString("\n").split("\\$\\$\\$\\$").map(z => z.split("\\n").take(2).mkString("")).mkString(", ")))
-        
-    val t250 = spark.read.json("src/test/resources/CDK/*.json").as[DS1]
-      .map(ds => (ds.fileName,ds
-          .SDFs
-          .split("\\n").map(z => if (z.contains("CDK  ")) "" else z)
-        .mkString("\n").split("\\$\\$\\$\\$").map(z => z.split("\\n").take(2).mkString("")).mkString(", ")))
-
-    
-    println("\n Seed 250:\n")
-    seed250.show(4,false)
-    println("\n Seed 250 file generated:\n")
-    t250.show(4,false)
-
+    val seed250 = spark.read.json("src/test/resources/250-master-none-1.json").as[DataSet]
+ 
+    val t250 = spark.read.json("src/test/resources/string/*.json").as[DataSet]
     
     val diff250 = seed250.except(t250).union(t250.except(seed250)).count()
     println("\nNumber of non matching elements with seed=250:\t" + diff250.toString)
@@ -74,7 +60,8 @@ class testSplitTrainTest extends FunSuite {
     assert(diff250 === 0)
     sc.stop()
   }
-
+  
 }
+
 
 
