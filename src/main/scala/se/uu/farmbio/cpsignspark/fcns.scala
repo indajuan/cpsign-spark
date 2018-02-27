@@ -14,13 +14,14 @@ import org.apache.spark.sql.SQLContext
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.rdd.RDD
 
+
 object fcns {
   
   implicit class Crossable[X](xs: List[X]) {
       def cross[Y](ys: List[Y]) = for { x <- xs; y <- ys } yield (x, y)
     }
   
-  def toListSDFs(rdd: RDD[(String, String)], splitRatio: Float, seedInput: Int): RDD[String] = {
+  def toListSDFs(rdd: RDD[(String, String)], splitRatio: Float, seedInput: Int): RDD[(String,Boolean,String)] = {
     rdd.flatMap {
       case (fileName, sdfs) =>
         Random.setSeed(seedInput)
@@ -38,12 +39,9 @@ object fcns {
           .splitAt(Math.round(sdfsList.length * splitRatio))
 
         Random.setSeed(seedInput)
-        Seq( seedInput.toString + "\n" + fn + "\n"  +
-              Random.shuffle(posTrain ++ negTrain).map(z => z._1)
-              .mkString(">  <file>\n" + fn +  "\n$$$$") + "\n>  <file>\n" + fn + "\n$$$$" + "\nTESTSDFFILE\n" +
-              Random.shuffle(posTest ++ negTest).map(z => z._1)
-              .mkString(">  <file>\n" + fn +  "\n$$$$") + "\n>  <file>\n" + fn + "\n$$$$")
-    }
+        Seq( (fn , true, Random.shuffle(posTrain ++ negTrain).map(z => z._1)),
+             (fn , false, Random.shuffle(posTest ++ negTest).map(z => z._1)))
+    }.flatMap( t  => t._3.map(z => (t._1, t._2,z)))
   }
    
 }

@@ -116,7 +116,7 @@ object CCP {
 
     //SPARK CONF
     val conf = new SparkConf().setAppName("CCPpredictionCalibration")
-    conf.setMaster(sparkMaster)
+    if (sparkMaster == "local") conf.setMaster("local")
     val sc = new SparkContext(conf)
     if (swiftOpenstack != "none") sc.addJar(swiftOpenstack)
     sc.setLogLevel("WARN")
@@ -126,73 +126,79 @@ object CCP {
     //PARAMETERS
     val parCpsign = ((((heightStart zip heightEnd cross folds)
       .map(z => (z._1._1, z._1._2, z._2))) cross costs)
-      .map(z => (z._1._1, z._1._2, z._1._3, z._2))) // cross seedInput)
-    //.map(z => (z._2, (z._1._1, z._1._2, z._1._3, z._1._4)))
-    //.map(z => z.productIterator.toList.mkString("\n"))
+      .map(z => (z._1._1, z._1._2, z._1._3, z._2))) 
 
     //READ DATA
     val rddSDFs = sc.wholeTextFiles(inputFolder, numberOfSplits).cache()
     //val wholeSDFs = new filesSDF(sc.wholeTextFiles(inputFolder, numberOfSplits))
+    println("numberOfSplits:  " + rddSDFs.partitions.size)
 
     seedInput.map {
       case s => {
-        val dataSet0 = toListSDFs(rddSDFs, splitRatio, s).cache()
-        parCpsign.map {
-          case (hs, he, f, c) => {
-            println(f"heightStar: $hs, heightEnd: $he, fold:$f, cost:$c, seed:$s")
-            val predictions = new EasyMapReduce(dataSet0
-                .map(z => hs.toString  + "\n" + he.toString  + "\n" + f.toString + "\n"  + c.toString + "\n" + z))
-              .setInputMountPoint("/dataSet.txt")
-              .setOutputMountPoint("/out.txt")
-              // Train
-              .map(
-                imageName = "indajuan/cpsign",
-                command = // SPLIT STRING INTO DATASET, TRAIN, TEST
-                  "head -n 6 /dataSet.txt  > pars && " + // save parameters
-                    "export heightStart=$(head -1 pars | tr -d \"\n\") && " +
-                    "export heightEnd=$(tail -n+2 pars | head -n 1 | tr -d \"\n\") && " +
-                    "export folds=$(tail -n+3 pars | head -n 1 | tr -d \"\n\") && " +
-                    "export costs=$(tail -n+4 pars | head -n 1 | tr -d \"\n\") && " +
-                    "export seed=$(tail -n+5 pars | head -n 1 | tr -d \"\n\") && " +
-                    "export dataName=$(tail -n+6 pars | head -n 1 | tr -d \"\n\") && " +
-                    "tail -n+7 /dataSet.txt  > /dataSDF.txt && " + // remove the dataset name
-                    "csplit -f set /dataSDF.txt /TESTSDFFILE/ && " + // split into train and test
-                    "mv set00 /train.sdf && " + // rename and relocate
-                    "tail -n+2 set01  > /test.sdf && " + // remove the TESTFFILE line
-                    // TRAIN MODEL
-                    "java -jar cpsign-0.6.6.jar train " + //start cpsign
-                    "-t /train.sdf " + // train file
-                    "-mn out " + //model name
-                    "-mo /$dataName.cpsign " + //model out
-                    "-c 3 " + // 3 CCP, 1 ACP
-                    "-hs $heightStart " + // height start
-                    "-he $heightEnd " + // height end
-                    "-l [\"-1\",\"1\"] " + //labels
-                    "-rn class " + //response name
-                    "-nr $folds " + // number of folds
-                    "--cost $costs " + // cost
-                    "-i liblinear " + // liblinear or libsvm
-                    "--license cpsign05-staffan-standard.license && " + //license
-                    // PREDICT
-                    "java -jar cpsign-0.6.6.jar predict " +
-                    "--license cpsign05-staffan-standard.license " +
-                    "-c 3 " +
-                    "-m /$dataName.cpsign " +
-                    "-p /test.sdf " +
-                    "-o /out.txt ")
-              .getRDD.map { json =>
-                val parsedJson = parse(json)
-                val key = compact(render(parsedJson \ "molecule" \ "cdk:Title"))
-                val p0 = compact(render(parsedJson \ "prediction" \ "pValues" \ "-1")).toDouble
-                val p1 = compact(render(parsedJson \ "prediction" \ "pValues" \ "1")).toDouble
-                val label = compact(render(parsedJson \ "molecule" \ "class"))
-                val fileN = compact(render(parsedJson \ "molecule" \ "file"))
-                CP(hs, he, f, c, s, fileN, key, label, p0, p1)
-              }
-              .toDF.write.format("json").mode("overwrite")
-              .save(outputFolder + "_" + hs.toString + "-" + he.toString + "-" + f.toString + "-" + c.toString + "-" + s.toString)
+        val dataSet0 = toListSDFs(rddSDFs, splitRatio, s).groupBy(_._1)
+          .map {
+            case (f, v) => (f, v.map(z => (z._2, z._3 + "\n>  <file>\n" + z._1)).groupBy(_._1)
+              .map {
+                case (q, w) => (q, w.map(r => r._2).mkString("\n$$$$"))
+              }.map(z => z._2 + "\n$$$$").mkString("\nTRAININGSET\n"))
+          }.map(z => z._2)
+
+        val dataSet1 =
+          parCpsign.map {
+            case (hs, he, f, c) => {
+              println(f"heightStar: $hs, heightEnd: $he, fold:$f, cost:$c, seed:$s")
+              val predictions = new EasyMapReduce(dataSet0
+                .map(z => hs.toString + "\n" + he.toString + "\n" + f.toString + "\n" + c.toString + "\n" + z))
+                .setInputMountPoint("/dataSet.txt")
+                .setOutputMountPoint("/out.txt")
+                // Train
+                .map(
+                  imageName = "indajuan/cpsign",
+                  command = // SPLIT STRING INTO DATASET, TRAIN, TEST
+                    "head -n 5 /dataSet.txt  > pars && " + // save parameters
+                      "export heightStart=$(head -1 pars | tr -d \"\n\") && " +
+                      "export heightEnd=$(tail -n+2 pars | head -n 1 | tr -d \"\n\") && " +
+                      "export folds=$(tail -n+3 pars | head -n 1 | tr -d \"\n\") && " +
+                      "export costs=$(tail -n+4 pars | head -n 1 | tr -d \"\n\") && " +
+                      "export seed=$(tail -n+5 pars | head -n 1 | tr -d \"\n\") && " +
+                      "tail -n+6 /dataSet.txt  > /dataSDF.txt && " + // remove the dataset name
+                      "csplit -f set /dataSDF.txt /TRAININGSET/ && " + // split into train and test
+                      "mv set00 /test.sdf && " + // rename and relocate
+                      "tail -n+2 set01  > /train.sdf && " + // remove the TRAININGSET line
+                      // TRAIN MODEL
+                      "java -jar cpsign-0.6.6.jar train " + //start cpsign
+                      "-t /train.sdf " + // train file
+                      "-mn out " + //model name
+                      "-mo /$dataName.cpsign " + //model out
+                      "-c 3 " + // 3 CCP, 1 ACP
+                      "-hs $heightStart " + // height start
+                      "-he $heightEnd " + // height end
+                      "-l [\"-1\",\"1\"] " + //labels
+                      "-rn class " + //response name
+                      "-nr $folds " + // number of folds
+                      "--cost $costs " + // cost
+                      "-i liblinear " + // liblinear or libsvm
+                      "--license cpsign05-staffan-standard.license && " + //license
+                      // PREDICT
+                      "java -jar cpsign-0.6.6.jar predict " +
+                      "--license cpsign05-staffan-standard.license " +
+                      "-c 3 " +
+                      "-m /$dataName.cpsign " +
+                      "-p /test.sdf " +
+                      "-o /out.txt ")
+                .getRDD.map { json =>
+                  val parsedJson = parse(json)
+                  val key = compact(render(parsedJson \ "molecule" \ "cdk:Title"))
+                  val p0 = compact(render(parsedJson \ "prediction" \ "pValues" \ "-1")).toDouble
+                  val p1 = compact(render(parsedJson \ "prediction" \ "pValues" \ "1")).toDouble
+                  val label = compact(render(parsedJson \ "molecule" \ "class"))
+                  val fileN = compact(render(parsedJson \ "molecule" \ "file"))
+                  CP(hs, he, f, c, s, fileN, key, label, p0, p1)
+                }
+                .toDF.write.format("json").mode("overwrite")
+                .save(outputFolder + "_" + hs.toString + "-" + he.toString + "-" + f.toString + "-" + c.toString + "-" + s.toString)
+            }
           }
-        }
       }
     }
 
