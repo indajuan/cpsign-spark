@@ -4,6 +4,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.SQLContext
+import scala.util.Random
 
 import org.json4s._
 import org.json4s.jackson.JsonMethods._
@@ -124,85 +125,80 @@ object CCP {
     import spark.implicits._
 
     //PARAMETERS
-    val parCpsign = ((((heightStart zip heightEnd cross folds)
-      .map(z => (z._1._1, z._1._2, z._2))) cross costs)
-      .map(z => (z._1._1, z._1._2, z._1._3, z._2))) 
+
+    val parCpsign = (for (
+      hs <- heightStart;
+      he <- heightEnd;
+      f <- folds;
+      c <- costs
+    ) yield (hs, he, f, c)).distinct
 
     //READ DATA
-    val rddSDFs = sc.wholeTextFiles(inputFolder, numberOfSplits).cache()
-    //val wholeSDFs = new filesSDF(sc.wholeTextFiles(inputFolder, numberOfSplits))
-    println("numberOfSplits:  " + rddSDFs.partitions.size)
 
-    seedInput.map {
-      case s => {
-        val dataSet0 = toListSDFs(rddSDFs, splitRatio, s).groupBy(_._1)
-          .map {
-            case (f, v) => (f, v.map(z => (z._2, z._3 + "\n>  <file>\n" + z._1)).groupBy(_._1)
-              .map {
-                case (q, w) => (q, w.map(r => r._2).mkString("\n$$$$"))
-              }.map(z => z._2 + "\n$$$$").mkString("\nTRAININGSET\n"))
-          }.map(z => z._2)
+    val sdfFiles = toTrainTestList(sc.wholeTextFiles(inputFolder,numberOfSplits))
 
-        val dataSet1 =
-          parCpsign.map {
-            case (hs, he, f, c) => {
-              println(f"heightStar: $hs, heightEnd: $he, fold:$f, cost:$c, seed:$s")
-              val predictions = new EasyMapReduce(dataSet0
-                .map(z => hs.toString + "\n" + he.toString + "\n" + f.toString + "\n" + c.toString + "\n" + z))
-                .setInputMountPoint("/dataSet.txt")
-                .setOutputMountPoint("/out.txt")
-                // Train
-                .map(
-                  imageName = "indajuan/cpsign",
-                  command = // SPLIT STRING INTO DATASET, TRAIN, TEST
-                    "head -n 5 /dataSet.txt  > pars && " + // save parameters
-                      "export heightStart=$(head -1 pars | tr -d \"\n\") && " +
-                      "export heightEnd=$(tail -n+2 pars | head -n 1 | tr -d \"\n\") && " +
-                      "export folds=$(tail -n+3 pars | head -n 1 | tr -d \"\n\") && " +
-                      "export costs=$(tail -n+4 pars | head -n 1 | tr -d \"\n\") && " +
-                      "export seed=$(tail -n+5 pars | head -n 1 | tr -d \"\n\") && " +
-                      "tail -n+6 /dataSet.txt  > /dataSDF.txt && " + // remove the dataset name
-                      "csplit -f set /dataSDF.txt /TRAININGSET/ && " + // split into train and test
-                      "mv set00 /test.sdf && " + // rename and relocate
-                      "tail -n+2 set01  > /train.sdf && " + // remove the TRAININGSET line
-                      // TRAIN MODEL
-                      "java -jar cpsign-0.6.6.jar train " + //start cpsign
-                      "-t /train.sdf " + // train file
-                      "-mn out " + //model name
-                      "-mo /$dataName.cpsign " + //model out
-                      "-c 3 " + // 3 CCP, 1 ACP
-                      "-hs $heightStart " + // height start
-                      "-he $heightEnd " + // height end
-                      "-l [\"-1\",\"1\"] " + //labels
-                      "-rn class " + //response name
-                      "-nr $folds " + // number of folds
-                      "--cost $costs " + // cost
-                      "-i liblinear " + // liblinear or libsvm
-                      "--license cpsign05-staffan-standard.license && " + //license
-                      // PREDICT
-                      "java -jar cpsign-0.6.6.jar predict " +
-                      "--license cpsign05-staffan-standard.license " +
-                      "-c 3 " +
-                      "-m /$dataName.cpsign " +
-                      "-p /test.sdf " +
-                      "-o /out.txt ")
-                .getRDD.map { json =>
-                  val parsedJson = parse(json)
-                  val key = compact(render(parsedJson \ "molecule" \ "cdk:Title"))
-                  val p0 = compact(render(parsedJson \ "prediction" \ "pValues" \ "-1")).toDouble
-                  val p1 = compact(render(parsedJson \ "prediction" \ "pValues" \ "1")).toDouble
-                  val label = compact(render(parsedJson \ "molecule" \ "class"))
-                  val fileN = compact(render(parsedJson \ "molecule" \ "file"))
-                  CP(hs, he, f, c, s, fileN, key, label, p0, p1)
-                }
-                .toDF.write.format("json").mode("overwrite")
-                .save(outputFolder + "_" + hs.toString + "-" + he.toString + "-" + f.toString + "-" + c.toString + "-" + s.toString)
-            }
-          }
-      }
-    }
+    val sdfExpanded = expandSDF(sdfFiles, parCpsign, seedInput, splitRatio)//.repartition(numberOfSplits)
 
+    val predictions = new EasyMapReduce(sdfExpanded)
+      .setInputMountPoint("/dataSet.txt")
+      .setOutputMountPoint("/out.txt")
+      // Train
+      .map(
+        imageName = "indajuan/cpsign",
+        command = // SPLIT STRING INTO DATASET, TRAIN, TEST
+          "head -n 5 /dataSet.txt  > pars && " + // save parameters
+            "export heightStart=$(head -1 pars | tr -d \"\n\") && " +
+            "export heightEnd=$(tail -n+2 pars | head -n 1 | tr -d \"\n\") && " +
+            "export folds=$(tail -n+3 pars | head -n 1 | tr -d \"\n\") && " +
+            "export costs=$(tail -n+4 pars | head -n 1 | tr -d \"\n\") && " +
+            "export seed=$(tail -n+5 pars | head -n 1 | tr -d \"\n\") && " +
+            "tail -n+6 /dataSet.txt  > /dataSDF.txt && " + // remove the dataset name
+            "csplit -f set /dataSDF.txt /TRAININGSET/ && " + // split into train and test
+            "mv set00 /test.sdf && " + // rename and relocate
+            "tail -n+3 set01  > /train.sdf && " + // remove the TRAININGSET line
+            // TRAIN MODEL
+            "java -Xmx1G -jar cpsign-0.6.6.jar train " + //start cpsign
+            "-t /train.sdf " + // train file
+            "-mn out " + //model name
+            "-mo /model.cpsign " + //model out
+            "-c 3 " + // 3 CCP, 1 ACP
+            "-hs $heightStart " + // height start
+            "-he $heightEnd " + // height end
+            "-l [\"-1\",\"1\"] " + //labels
+            "-rn class " + //response name
+            "-nr $folds " + // number of folds
+            "--cost $costs " + // cost
+            "-i liblinear " + // liblinear or libsvm
+            "--license cpsign05-staffan-standard.license && " + //license
+            // PREDICT
+            "java -jar cpsign-0.6.6.jar predict " +
+            "--license cpsign05-staffan-standard.license " +
+            "-c 3 " +
+            "-m /model.cpsign " +
+            "-p /test.sdf " +
+            "-o /out.txt ")
+      .getRDD.map { json =>
+        val parsedJson = parse(json)
+        val key = compact(render(parsedJson \ "molecule" \ "cdk:Title")).replace("\"", "")
+        val p0 = compact(render(parsedJson \ "prediction" \ "pValues" \ "-1")).toDouble
+        val p1 = compact(render(parsedJson \ "prediction" \ "pValues" \ "1")).toDouble
+        val label = compact(render(parsedJson \ "molecule" \ "class")).replace("\"", "")
+        val fileN = compact(render(parsedJson \ "molecule" \ "file")).replace("\"", "")
+        val hs = compact(render(parsedJson \ "molecule" \ "hs")).replace("\"", "").toInt
+        val he = compact(render(parsedJson \ "molecule" \ "he")).replace("\"", "").toInt
+        val f = compact(render(parsedJson \ "molecule" \ "f")).replace("\"", "").toInt
+        val c = compact(render(parsedJson \ "molecule" \ "c")).replace("\"", "").toInt
+        val s = compact(render(parsedJson \ "molecule" \ "s")).replace("\"", "").toInt
+        CP(hs, he, f, c, s, fileN, key, label, p0, p1)
+      }.toDF.write.format("json").mode("overwrite").save(outputFolder + (Math.round(splitRatio * 100)).toString)
+    println("\nSaved: " + outputFolder + (Math.round(splitRatio * 100)).toString)
+
+    sc.stop()
   }
-}
-    //-sparkMaster local -inputFolder src/test/resources/input -outputFolder src/test/resources/output -seedInput 250\
+}     
+    
+
+//-sparkMaster local -inputFolder src/test/resources/input -outputFolder src/test/resources/output -seedInput 250\
     //-splitRatio 0.8 -swiftOpenstack none -numberOfSplits 1 -heightStart 1 -heightEnd 3 -folds 3 -costs 50 -seedInput 100,250
+
+//--sparkMaster local --inputFolder src/test/resources/input --outputFolder src/test/resources/output/ --seedInput 100,20 --splitRatio 0.2 --swiftOpenstack none --numberOfSplits 1 --heightStart 0,1 --heightEnd 3,3 --folds 2,3 --costs 50,100

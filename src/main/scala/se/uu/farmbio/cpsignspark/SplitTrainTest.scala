@@ -28,14 +28,10 @@ object SplitTrainTest {
 
     val conf = new SparkConf().setAppName("SplitterTestTrain")
     if (sparkmaster == "local") conf.setMaster("local")
-
     val sc = new SparkContext(conf)
     if (swiftOpenstack != "none") sc.addJar(swiftOpenstack)
-
     sc.setLogLevel("WARN")
-
     val spark = SparkSession.builder().appName("SplitTrainTest").config("", "").getOrCreate()
-
     import spark.implicits._
 
     //read all the files in directory
@@ -63,10 +59,11 @@ object SplitTrainTest {
         val (negTrain, negTest) = sdfsList.filter(!_._2)
           .splitAt(Math.round(sdfsList.length * splitRatio))
         
-        Random.setSeed(seedInput)
+        //Random.setSeed(seedInput)
         Seq(
-          DataSetList(fileName.split(inputFolder + "/").last, true, Random.shuffle(posTrain ++ negTrain).map(z => z._1)),
-          DataSetList(fileName.split(inputFolder + "/").last, false, Random.shuffle(posTest ++ negTest).map(z => z._1)))
+          DataSetList(fileName.split(inputFolder + "/").last, true, (posTrain ++ negTrain).map(z => z._1)),
+          DataSetList(fileName.split(inputFolder + "/").last, false, (posTest ++ negTest).map(z => z._1)))
+          //DataSetList(fileName.split(inputFolder + "/").last, false, Random.shuffle(posTest ++ negTest).map(z => z._1)))
     }
     
     // flat the training and testing list to one row per element in the lists, to dataframe, write to json
