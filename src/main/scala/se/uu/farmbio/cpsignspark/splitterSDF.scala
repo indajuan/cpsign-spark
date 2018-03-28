@@ -98,8 +98,8 @@ object splitterSDF {
       val fs = FileSystem.get(conf)
       val test = f._2
       val train = f._3
-      val file1 = f._1 + "_test.sdf"
-      val file2 = f._1 + "_train.sdf"
+      val file1 = f._1 + "_tst.sdf"
+      val file2 = f._1 + "_trn.sdf"
 
       val path1: Path = new Path(outputFolder  + file1)
       if (fs.exists(path1)) {

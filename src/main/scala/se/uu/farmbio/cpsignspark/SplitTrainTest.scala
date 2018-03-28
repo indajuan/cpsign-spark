@@ -1,4 +1,4 @@
-/*
+
 package se.uu.farmbio.cpsignspark
 
 import java.io._
@@ -79,4 +79,3 @@ object SplitTrainTest {
 // <splitratio 0.8> <seed 250> <master local> <jar added none> <numberOfSplits 1>
 // need to shuffle before submitting to cpsign or ML algorithm 
 
-*/
