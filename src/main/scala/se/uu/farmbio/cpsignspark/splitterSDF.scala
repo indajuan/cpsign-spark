@@ -65,7 +65,7 @@ object splitterSDF {
     } getOrElse {
       sys.exit(1)
     }
-    System.exit(0)
+    //System.exit(0)
   }
 
   def run(params: Arglist) {
