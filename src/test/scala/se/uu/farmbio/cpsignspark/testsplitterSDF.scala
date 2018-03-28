@@ -15,7 +15,7 @@ class testsplitterSDF extends FunSuite{
         "--outputFolder", "src/test/resources/output1/", "--seedInput", "20", "--splitRatio", "0.2", 
         "--swiftOpenstack", "none", "--numberOfSplits", "1"))
 
-    val conf = new SparkConf().setAppName("splitterSDFtest").setMaster("local")
+    val conf = new SparkConf().setAppName("testsplitterSDF").setMaster("local")
 
     val sc = new SparkContext(conf)
 
@@ -32,8 +32,6 @@ class testsplitterSDF extends FunSuite{
     sc.stop()
   }
   
-  
-  test("one plus one is two")(assert(1 + 1 == 2))
 }
 
 
