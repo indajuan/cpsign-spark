@@ -54,10 +54,10 @@
 			<artifactId>spark-core_${scala.compat.version}</artifactId>
 			<version>2.1.0</version>
 		</dependency>
-		
+
 		<dependency>
 			<groupId>se.uu.it</groupId>
-			<artifactId>easymr</artifactId>
+			<artifactId>mare</artifactId>
 			<version>0.3.0</version>
 		</dependency>
 
