@@ -125,7 +125,7 @@ object gridCrossConformalPrediction {
       f <- folds;
       c <- costs
     ) yield (inputFile.toUpperCase() + "_" + s + "-" + hs + "_" + he + "_" + f + "_" + c, hs, he))
-    val models = models0.filter(z => z._2 < z._3).distinct.map(z=>z._1)
+    val models = models0.filter(z => z._2 <= z._3).distinct.map(z=>z._1)
     println("\nNumber of parameter combinations:  " + models.length + "\n")
     println("\nDataset_Seed-HeightStart_HeightEnd_Folds_Cost")
     models.foreach(println)
