@@ -118,13 +118,14 @@ object gridCrossConformalPrediction {
     val spark = SparkSession.builder().appName("gridCCP").config("", "").getOrCreate()
     import spark.implicits._
 
-    val models = (for (
+    val models0 = (for (
       s <- seeds;
       hs <- heightStart;
       he <- heightEnd;
       f <- folds;
       c <- costs
-    ) yield (inputFile.toUpperCase() + "_" + s + "-" + hs + "_" + he + "_" + f + "_" + c)).distinct
+    ) yield (inputFile.toUpperCase() + "_" + s + "-" + hs + "_" + he + "_" + f + "_" + c, hs, he))
+    val models = models0.filter(z => z._2 < z._3).distinct.map(z=>z._1)
     println("\nNumber of parameter combinations:  " + models.length + "\n")
     println("\nDataset_Seed-HeightStart_HeightEnd_Folds_Cost")
     models.foreach(println)
@@ -159,7 +160,7 @@ object gridCrossConformalPrediction {
             "-c 3 -hs $heightStart -he $heightEnd -nr $fold --cost $cost " + 
             "--license cpsign05-staffan-standard.license && " +
             // PREDICT
-            "java -jar cpsign-0.6.6.jar predict -c 3 -m /model.cpsign -p $fileToTest -o /out.txt " +
+            "java -Xmx1536M -jar cpsign-0.6.6.jar predict -c 3 -m /model.cpsign -p $fileToTest -o /out.txt " +
             "--license cpsign05-staffan-standard.license ")
       .getRDD
 
@@ -181,7 +182,7 @@ object gridCrossConformalPrediction {
     }
 
     val predictionsDF = predictions1.toDF
-    predictionsDF.write.format("json").mode("overwrite").save(outputFolder)
+    predictionsDF.write.format("json").partitionBy("seed").mode("overwrite").save(outputFolder)
     println("\nSaved: " + outputFolder)
     sc.stop()
   }
