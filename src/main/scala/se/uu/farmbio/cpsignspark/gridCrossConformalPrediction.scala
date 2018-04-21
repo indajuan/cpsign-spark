@@ -19,12 +19,15 @@ import org.apache.spark.sql.Row
 import scala.collection.mutable.WrappedArray
 import org.apache.spark.RangePartitioner
 
-case class CP(hs: Int, he: Int, fold: Int, cost: Double, seed: Int, file: String, CDK: String, label: String, p0: Double, p1: Double)
+case class CP(qhts: String, molID: String, label: String,
+    splitSeed: Int, heightStart: Int, heightEnd: Int, 
+    folds: Int, cost: Double,  p0: Double, p1: Double)
 
 object gridCrossConformalPrediction {
 
   case class Arglist(
     sparkMaster:    String      = "local",
+    javaMemoryForContainer: String  = "2048M",
     inputFile:      String      = "",
     outputFolder:   String      = "",
     swiftOpenstack: String      = "none",
@@ -41,6 +44,9 @@ object gridCrossConformalPrediction {
       opt[String]("sparkMaster")
         .text("SparkMaster")
         .action((x, c) => c.copy(sparkMaster = x))
+      opt[String]("javaMemoryForContainer")
+        .text("javaMemoryForContainer")
+        .action((x, c) => c.copy(javaMemoryForContainer = x))
       opt[String]("inputFile")
         .required()
         .validate(x =>
@@ -100,6 +106,7 @@ object gridCrossConformalPrediction {
 
     //ARGS
     val inputFile = params.inputFile
+    val javaMemoryForContainer = params.javaMemoryForContainer
     val outputFolder = params.outputFolder
     val sparkMaster = params.sparkMaster
     val swiftOpenstack = params.swiftOpenstack
@@ -110,12 +117,12 @@ object gridCrossConformalPrediction {
     val costs = params.costs.toList
 
     //SPARK CONF
-    val conf = new SparkConf().setAppName("gridCCP")
+    val conf = new SparkConf().setAppName("gridCCP-liblinear")
     if (sparkMaster == "local") conf.setMaster("local")
     val sc = new SparkContext(conf)
     if (swiftOpenstack != "none") sc.addJar(swiftOpenstack)
     sc.setLogLevel("WARN")
-    val spark = SparkSession.builder().appName("gridCCP").config("", "").getOrCreate()
+    val spark = SparkSession.builder().appName("gridCCP-liblinear").config("", "").getOrCreate()
     import spark.implicits._
 
     val models0 = (for (
@@ -125,13 +132,14 @@ object gridCrossConformalPrediction {
       f <- folds;
       c <- costs
     ) yield (inputFile.toUpperCase() + "_" + s + "-" + hs + "_" + he + "_" + f + "_" + c, hs, he))
-    val models = models0.filter(z => z._2 <= z._3).distinct.map(z=>z._1)
-    println("\nNumber of parameter combinations:  " + models.length + "\n")
-    println("\nDataset_Seed-HeightStart_HeightEnd_Folds_Cost")
-    models.foreach(println)
+    
+    val models = models0.filter(z => z._2 <= z._3).distinct.map(z=>z._1 + "\n" + "-Xmx" + javaMemoryForContainer)
+    
+    println("\nCross Conformal Prediction for: " + inputFile + " using SVM liblinear CPsign package")
+    println("\nNumber of parameter combinations:  " + models.length)
+    println("\nJava memory for container:  " + javaMemoryForContainer)
 
     val rddModels = sc.parallelize(models, models.length)
-
     val predictions = new MaRe(rddModels)
       .setInputMountPoint("/dataSet.txt")
       .setOutputMountPoint("/out.txt")
@@ -140,27 +148,28 @@ object gridCrossConformalPrediction {
         imageName = "indajuan/" + inputFile.toLowerCase(),
         command = 
           // Parameters
-          "export pars0=`cat /dataSet.txt | tr -d \"\n\"` && " +
-          "export fileSDF=`cat /dataSet.txt | awk '{split($0,a,\"-\"); print a[1]}' | tr -d \"\n\"` && " +
+          "export pars0=`head -n 1 /dataSet.txt | tr -d \"\n\"` && " +
+          "export fileSDF=`head -n 1 /dataSet.txt | awk '{split($0,a,\"-\"); print a[1]}' | tr -d \"\n\"` && " +
             "export extFileTrain=\"_train.sdf\" && " +
             "export extFileTest=\"_test.sdf\" && " +
             "export fileToTrain=$fileSDF$extFileTrain  && " +
             "export fileToTest=$fileSDF$extFileTest  && " +
-            "export pars=`cat /dataSet.txt | awk '{split($0,a,\"-\"); print a[2]}' | tr -d \"\n\"` && " +
+            "export pars=`head -n 1 /dataSet.txt | awk '{split($0,a,\"-\"); print a[2]}' | tr -d \"\n\"` && " +
             "export heightStart=`echo $pars | awk -F\"_\"  '{print $1}' | tr -d \"\n\"` && " +
             "export heightEnd=`echo $pars | awk -F\"_\"  '{print $2}' | tr -d \"\n\"` && " +
             "export fold=`echo $pars | awk -F\"_\"  '{print $3}' | tr -d \"\n\"` && " +
             "export cost=`echo $pars | awk -F\"_\"  '{print $4}' | tr -d \"\n\"` && " +
             "sed -i \'s/\\$\\$\\$\\$/>  <par>\\n'\"$pars0\"'\\n\\$\\$\\$\\$/g\' $fileToTest && " +
             "sed -i \'s/\\$\\$\\$\\$/>  <par>\\n'\"$pars0\"'\\n\\$\\$\\$\\$/g\' $fileToTrain && " +
+            "export javaMemoryForContainer=`tail -1 /dataSet.txt | tr -d \"\n\"` && " +
             
           // train  
-            "java -Xmx1536M -jar cpsign-0.6.6.jar train -t $fileToTrain " + // train file
+            "java $javaMemoryForContainer -jar cpsign-0.6.6.jar train -t $fileToTrain " + // train file
             "-mn out -mo /model.cpsign -rn class -i liblinear -l [\"-1\",\"1\"] " +
             "-c 3 -hs $heightStart -he $heightEnd -nr $fold --cost $cost " + 
             "--license cpsign05-staffan-standard.license && " +
             // PREDICT
-            "java -Xmx1536M -jar cpsign-0.6.6.jar predict -c 3 -m /model.cpsign -p $fileToTest -o /out.txt " +
+            "java $javaMemoryForContainer -jar cpsign-0.6.6.jar predict -c 3 -m /model.cpsign -p $fileToTest -o /out.txt " +
             "--license cpsign05-staffan-standard.license ")
       .getRDD
 
@@ -172,18 +181,20 @@ object gridCrossConformalPrediction {
         val p1 = compact(render(parsedJson \ "prediction" \ "pValues" \ "1")).toDouble
         val label = compact(render(parsedJson \ "molecule" \ "class")).replace("\"", "")
         val name = compact(render(parsedJson \ "molecule" \ "par")).replace("\"", "")
-        val file = name.split("-")(0).split("_")(0).replace("\"", "")
+        val filename = name.split("-")(0).split("_")(0).replace("\"", "")
         val hs = name.split("-")(1).split("_")(0).toInt
         val he = name.split("-")(1).split("_")(1).toInt
-        val f = name.split("-")(1).split("_")(2).toInt
-        val c = name.split("-")(1).split("_")(3).toDouble
-        val s = name.split("-")(0).split("_")(1).toInt
-        CP(hs, he, f, c, s, file, key, label, p0, p1)
+        val fold = name.split("-")(1).split("_")(2).toInt
+        val cost = name.split("-")(1).split("_")(3).toDouble
+        val seed = name.split("-")(0).split("_")(1).toInt
+        CP(filename, key, label, seed, hs, he, fold, cost, p0, p1)
     }
-
+    
     val predictionsDF = predictions1.toDF
-    predictionsDF.write.format("json").partitionBy("seed").mode("overwrite").save(outputFolder)
+    
+    predictionsDF.repartition(folds.length*seeds.length).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder)
     println("\nSaved: " + outputFolder)
+    
     sc.stop()
   }
 
