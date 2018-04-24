@@ -226,7 +226,7 @@ object gridCrossConformalPrediction {
     
     val predictionsDF = predictions1.toDF
     
-    predictionsDF.repartition(folds.length*seeds.length).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder)
+    predictionsDF.repartition(folds.length*seeds.length).write.format("csv").option("header", "true").option("compression", "gzip").mode("overwrite").save(outputFolder)
     println("\nSaved: " + outputFolder)
     
     sc.stop()
