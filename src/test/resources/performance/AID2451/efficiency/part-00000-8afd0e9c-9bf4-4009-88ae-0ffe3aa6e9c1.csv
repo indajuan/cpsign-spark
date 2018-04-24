@@ -1,0 +1,3 @@
+qhts,splitSeed,heightStart,heightEnd,folds,cost,fuzziness,sumP
+AID2451,10,0,2,45,100.0,0.27573,0.7802
+AID2451,20,2,4,40,50.0,0.22704,0.72782

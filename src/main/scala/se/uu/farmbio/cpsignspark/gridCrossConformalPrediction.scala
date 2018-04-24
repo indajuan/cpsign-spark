@@ -35,7 +35,9 @@ object gridCrossConformalPrediction {
     heightStart:    Seq[Int]    = Seq(1),
     heightEnd:      Seq[Int]    = Seq(3),
     folds:          Seq[Int]    = Seq(5),
-    costs:          Seq[Double] = Seq(50))
+    costs:          Seq[Double] = Seq(50),
+    stratified:     Boolean      = false,
+    cpsignSeed:     String         = " ")
 
   def main(args: Array[String]) {
     val defaultParams = Arglist()
@@ -44,6 +46,12 @@ object gridCrossConformalPrediction {
       opt[String]("sparkMaster")
         .text("SparkMaster")
         .action((x, c) => c.copy(sparkMaster = x))
+      opt[Boolean]("stratified")
+        .text("stratified")
+        .action((x, c) => c.copy(stratified = x))
+      opt[String]("cpsignSeed")
+        .text("cpsignSeed")
+        .action((x, c) => c.copy(cpsignSeed = x))
       opt[String]("javaMemoryForContainer")
         .text("javaMemoryForContainer")
         .action((x, c) => c.copy(javaMemoryForContainer = x))
@@ -63,8 +71,8 @@ object gridCrossConformalPrediction {
         .action((x, c) => c.copy(swiftOpenstack = x))
       opt[Seq[Int]]("seeds")
         .validate(x =>
-          if (x.toSet.subsetOf(Set(10, 20, 30, 40, 50, 60, 70))) success
-          else failure("Options 10,20,30,40,50,60,70"))
+          if (x.toSet.subsetOf(Set(10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200))) success
+          else failure("Options 10,20,30,40,50,60,70,80,90,100,110,120,130,140,150,160,170,180,190,200"))
         .text("seedsOfRandomSplitsInDockerContainer")
         .action((x, c) => c.copy(seeds = x))
       opt[Seq[Int]]("heightStart")
@@ -115,6 +123,8 @@ object gridCrossConformalPrediction {
     val heightEnd = params.heightEnd.toList
     val folds = params.folds.toList
     val costs = params.costs.toList
+    val stratified = params.stratified
+    val cpsignSeed = params.cpsignSeed
 
     //SPARK CONF
     val conf = new SparkConf().setAppName("gridCCP-liblinear")
@@ -133,7 +143,9 @@ object gridCrossConformalPrediction {
       c <- costs
     ) yield (inputFile.toUpperCase() + "_" + s + "-" + hs + "_" + he + "_" + f + "_" + c, hs, he))
     
-    val models = models0.filter(z => z._2 <= z._3).distinct.map(z=>z._1 + "\n" + "-Xmx" + javaMemoryForContainer)
+    val strat = if(stratified) "--stratified " else " "
+    val cpSeed = if(cpsignSeed != " ") ("--seed " + cpsignSeed + " ") else cpsignSeed
+    val models = models0.filter(z => z._2 <= z._3).distinct.map(z=>z._1 + "\n" + "-Xmx" + javaMemoryForContainer + "\n" + strat + "\n" + cpSeed)
     
     println("\nCross Conformal Prediction for: " + inputFile + " using SVM liblinear CPsign package")
     println("\nNumber of parameter combinations:  " + models.length)
@@ -148,29 +160,51 @@ object gridCrossConformalPrediction {
         imageName = "indajuan/" + inputFile.toLowerCase(),
         command = 
           // Parameters
+          "echo 'running' && " +
           "export pars0=`head -n 1 /dataSet.txt | tr -d \"\n\"` && " +
           "export fileSDF=`head -n 1 /dataSet.txt | awk '{split($0,a,\"-\"); print a[1]}' | tr -d \"\n\"` && " +
-            "export extFileTrain=\"_train.sdf\" && " +
-            "export extFileTest=\"_test.sdf\" && " +
+            "export extFileTrain=\"_trn.sdf\" && " +
+            "export dataset=`head -n 1 /dataSet.txt | awk '{split($0,a,\"-\"); print a[1]}' | awk -F\"_\"  '{print $1}' | tr -d \"\n\"`  && " +
+            "export extFileTest=\"_tst.sdf\" && " +
             "export fileToTrain=$fileSDF$extFileTrain  && " +
             "export fileToTest=$fileSDF$extFileTest  && " +
+            "export zipExtention=\".zip\" && " +
+            
+            "echo 'unzipping sdf files' && " +
+            "echo $dataset$zipExtention && " +
+            "echo $fileToTrain && " +
+            "echo $fileToTest && " +
+            "unzip -p $dataset$zipExtention $fileToTrain > $fileToTrain && " +
+            "unzip -p $dataset$zipExtention $fileToTest > $fileToTest && " +
+            
+            "echo 'exporting parameters' && " +
             "export pars=`head -n 1 /dataSet.txt | awk '{split($0,a,\"-\"); print a[2]}' | tr -d \"\n\"` && " +
             "export heightStart=`echo $pars | awk -F\"_\"  '{print $1}' | tr -d \"\n\"` && " +
             "export heightEnd=`echo $pars | awk -F\"_\"  '{print $2}' | tr -d \"\n\"` && " +
             "export fold=`echo $pars | awk -F\"_\"  '{print $3}' | tr -d \"\n\"` && " +
             "export cost=`echo $pars | awk -F\"_\"  '{print $4}' | tr -d \"\n\"` && " +
+             
+            "echo 'entering parameters in sdf files' && " +
             "sed -i \'s/\\$\\$\\$\\$/>  <par>\\n'\"$pars0\"'\\n\\$\\$\\$\\$/g\' $fileToTest && " +
             "sed -i \'s/\\$\\$\\$\\$/>  <par>\\n'\"$pars0\"'\\n\\$\\$\\$\\$/g\' $fileToTrain && " +
-            "export javaMemoryForContainer=`tail -1 /dataSet.txt | tr -d \"\n\"` && " +
+            
+            //"export javaMemoryForContainer=`tail -n+2 /dataSet.txt | head -n1 | tr -d \"\n\"` && " +
+            //"export stratified=`tail -n+3 /dataSet.txt | head -n1 | tr -d \"\n\"` && " +
+            //"export cpSeed=`tail -1 /dataSet.txt | tr -d \"\n\"` && " +
             
           // train  
-            "java $javaMemoryForContainer -jar cpsign-0.6.6.jar train -t $fileToTrain " + // train file
+            "echo 'training' && " +
+            "java -Xmx" + javaMemoryForContainer + " -jar cpsign-0.6.6.jar train -t $fileToTrain " + // train file
             "-mn out -mo /model.cpsign -rn class -i liblinear -l [\"-1\",\"1\"] " +
             "-c 3 -hs $heightStart -he $heightEnd -nr $fold --cost $cost " + 
-            "--license cpsign05-staffan-standard.license && " +
-            // PREDICT
-            "java $javaMemoryForContainer -jar cpsign-0.6.6.jar predict -c 3 -m /model.cpsign -p $fileToTest -o /out.txt " +
-            "--license cpsign05-staffan-standard.license ")
+            strat + cpSeed +
+            "--percentiles 0 " +
+            "--license cpsign0.6-standard.license && " +
+
+            // predict
+            "echo 'predicting' && " +
+            "java -Xmx" + javaMemoryForContainer + " -jar cpsign-0.6.6.jar predict -c 3 -m /model.cpsign -p $fileToTest -o /out.txt " +
+            "--license cpsign0.6-standard.license ")
       .getRDD
 
     val predictions1 = predictions.map {

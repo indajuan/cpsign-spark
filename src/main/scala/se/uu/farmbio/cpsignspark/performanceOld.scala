@@ -23,15 +23,16 @@ case class Predict2(pars: String, qhts: String, molID: String,
 case class Validity2(pars: String, qhts: String, splitSeed: Int, hs: Int, he: Int, fold: Int, cost: Double, eval: Double, validity: Double,
                      numberCriterion: Double, mCriterion: Double, excessCriterion: Double, singleCorrect: Double, incorrect: Double)
 
-case class ValidityPerLabel(pars: String, qhts: String, label:String, splitSeed: Int, hs: Int, he: Int, fold: Int, cost: Double, eval: Double, validity: Double,
-                     numberCriterion: Double, mCriterion: Double, excessCriterion: Double, singleCorrect: Double, incorrect: Double)
+case class ValidityPerLabel(pars: String, qhts: String, label: String, splitSeed: Int, hs: Int, he: Int, fold: Int, cost: Double, eval: Double, validity: Double,
+                            numberCriterion: Double, mCriterion: Double, excessCriterion: Double, singleCorrect: Double, incorrect: Double)
 
 case class MisCalibration2(pars: String, qhts: String, splitSeed: Int, hs: Int, he: Int, fold: Int, cost: Double, eval: Double,
-                            validity: Double, errorRate: Double)
-                            
-case class MisCalibrationPerLabel(pars: String, qhts: String, label:String, splitSeed: Int, hs: Int, he: Int, fold: Int, cost: Double, eval: Double,
-                            validity: Double, errorRate: Double)
-                            
+                           validity: Double, errorRate: Double)
+case class MisCalibration1(pars: String, qhts: String, splitSeed: Int, hs: Int, he: Int, fold: Int, cost: Double, errorRate: Double)
+
+case class MisCalibrationPerLabel(pars: String, qhts: String, label: String, splitSeed: Int, hs: Int, he: Int, fold: Int, cost: Double, eval: Double,
+                                  validity: Double, errorRate: Double)
+case class MisCalibrationPerLabel1(pars: String, qhts: String, label: String, splitSeed: Int, hs: Int, he: Int, fold: Int, cost: Double, errorRate: Double)
 
 object performanceOld {
 
@@ -113,7 +114,7 @@ object performanceOld {
 
     if (minEpsilon >= maxEpsilon) println("minEpsilon is equal or larger than maxEpsilon.\n")
     val epsilon = (minEpsilon * r to maxEpsilon * r by (math.round((maxEpsilon * r - minEpsilon * r) / (nEpsilon)))).map(e => e.toDouble / r)
-    println("\nEpsilon range between " + minEpsilon + " and: " + epsilon.last + "\n")
+    println("\nEpsilon range between " + minEpsilon + " and: " + epsilon.last + " by: " + (epsilon(1) - epsilon(0)) + "\n")
 
     import spark.implicits._
     import org.apache.spark.sql.functions._
@@ -130,15 +131,15 @@ object performanceOld {
       StructField("p0", DoubleType, true),
       StructField("p1", DoubleType, true)))
 
-    val df = spark.read.schema(customSchema).option("header", true).option("delimiter", ",").csv(inputFile + "*.csv")
-    val ds = df.as[CP].persist()
+    val df = spark.read.schema(customSchema).option("header", true).option("delimiter", ",").csv(inputFile + "*.csv").persist()
+    val ds = df.as[CP]
 
     ds.printSchema()
 
-    val efficiency = ds.map(z => makePrediction(z, -1)).persist()
+    val efficiency = ds.map(z => makePrediction(z, -100))
 
     // efficiency all
-    
+
     efficiency.groupBy("pars", "qhts", "splitSeed", "hs", "he", "fold", "cost")
       .agg(
         avg("sumP") as "sumCriterion",
@@ -149,7 +150,7 @@ object performanceOld {
 
     println("\nSaved efficiency for: " + inputFile.split("/").last)
 
-    // efficiency per label 
+    // efficiency per label
     efficiency.groupBy("pars", "qhts", "label", "splitSeed", "hs", "he", "fold", "cost")
       .agg(
         avg("sumP") as "sumCriterion",
@@ -160,9 +161,64 @@ object performanceOld {
 
     println("\nSaved efficiency per label for: " + inputFile.split("/").last)
 
+    def makePerformance(epsilon: List[Double], predictionDS: Dataset[CP]) = {
+      def makeValidity(eps: List[Double], validityDS: Dataset[Validity2], 
+          validityPerLabel: Dataset[ValidityPerLabel]): (Dataset[Validity2], Dataset[ValidityPerLabel]) = {
 
+        eps match {
+          case Nil => (validityDS, validityPerLabel)
+          case x :: xs =>
+            val pred = predictionDS.map(cp => makePrediction(cp, x))
+            //validity
+            val valDS = pred.groupBy("pars", "qhts", "splitSeed", "hs", "he", "fold", "cost", "eval")
+              .agg(avg("correct") as "validity", avg("regionSize") as "numberCriterion", avg("mvalue") as "mCriterion",
+                avg("excess") as "excessCriterion", avg("singleCorrect") as "singleCorrect", avg("incorrect") as "incorrect")
+              .sort($"pars", $"eval").as[Validity2]
+
+            //validityperlabel
+            val valDSperLabel = pred.groupBy("pars", "qhts", "label", "splitSeed", "hs", "he", "fold", "cost", "eval")
+              .agg(avg("correct") as "validity", avg("regionSize") as "numberCriterion", avg("mvalue") as "mCriterion",
+                avg("excess") as "excessCriterion", avg("singleCorrect") as "singleCorrect", avg("incorrect") as "incorrect")
+              .sort($"pars", $"eval").as[ValidityPerLabel]
+
+            makeValidity(xs, validityDS.union(valDS), validityPerLabel.union(valDSperLabel))
+        }
+      }
+      val validityUnion = spark.createDataset[Validity2](sc.emptyRDD[Validity2])
+      val validityUnionPerLabel = spark.createDataset[ValidityPerLabel](sc.emptyRDD[ValidityPerLabel])
+      makeValidity(epsilon, validityUnion, validityUnionPerLabel)
+    }
+
+    val (validityAll, validityPerLabel) = makePerformance(epsilon.toList, ds)
+
+    validityAll.persist()
+    validityPerLabel.persist()
+
+    validityAll.repartition(1).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder + "validity")
+    println("\nSaved validity for: " + inputFile.split("/").last)
+
+    validityPerLabel.repartition(1).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder + "miscalibrationPerLabel")
+    println("\nSaved miscalibration per label for: " + inputFile.split("/").last)
+
+    //miscalibration
+    val misC = validityAll.map {
+      case Validity2(pars, qhts, splitSeed, hs, he, fold, cost, eval, validity, numberCriterion, mCriterion, excessCriterion, singleCorrect, incorrect) =>
+        new MisCalibration2(pars, qhts, splitSeed, hs, he, fold, cost, eval, validity, Math.abs((1 - validity) - eval))
+    }.groupBy("pars", "qhts", "splitSeed", "hs", "he", "fold", "cost").agg(sum("errorRate") as "errorRate").as[MisCalibration1]
+      .repartition(1).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder + "miscalibration")
+    println("\nSaved miscalibration for: " + inputFile.split("/").last)
+
+    //miscalibrationperlabel
+    val misCperLabel = validityPerLabel.map {
+      case ValidityPerLabel(pars, qhts, label, splitSeed, hs, he, fold, cost, eval, validity, numberCriterion, mCriterion, excessCriterion, singleCorrect, incorrect) =>
+        new MisCalibrationPerLabel(pars, qhts, label, splitSeed, hs, he, fold, cost, eval, validity, Math.abs((1 - validity) - eval))
+    }.groupBy("pars", "qhts", "label", "splitSeed", "hs", "he", "fold", "cost").agg(sum("errorRate") as "errorRate").as[MisCalibrationPerLabel1]
+      .repartition(1).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder + "miscalibrationPerLabel")
+    println("\nSaved miscalibration per label for: " + inputFile.split("/").last)
+
+    /*
     val validity = ds.flatMap(z => {
-      epsilon.map { e => makePrediction(z, e) }
+      epsilon.map(e => makePrediction(z, e))
     }).persist()
 
     //validity all
@@ -176,11 +232,10 @@ object performanceOld {
         avg("incorrect") as "incorrect")
       .sort($"pars", $"eval").as[Validity2]
 
-      
     validityAll.repartition(1).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder + "validity")
     println("\nSaved validity for: " + inputFile.split("/").last)
-    
-    val validityPerLabel = validity.groupBy("pars", "qhts","label", "splitSeed", "hs", "he", "fold", "cost", "eval")
+
+    val validityPerLabel = validity.groupBy("pars", "qhts", "label", "splitSeed", "hs", "he", "fold", "cost", "eval")
       .agg(
         avg("correct") as "validity",
         avg("regionSize") as "numberCriterion",
@@ -191,29 +246,30 @@ object performanceOld {
       .sort($"pars", $"eval").as[ValidityPerLabel]
 
     validityPerLabel.repartition(1).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder + "validityPerLabel")
+
     println("\nSaved validity per label for: " + inputFile.split("/").last)
-    
+
     // miscalibration all
-   
+
     validityAll.map {
-      case Validity2(pars, qhts, splitSeed, hs, he, fold, cost, eval, validity, numberCriterion, mCriterion, excessCriterion, singleCorrect,incorrect) =>
+      case Validity2(pars, qhts, splitSeed, hs, he, fold, cost, eval, validity, numberCriterion, mCriterion, excessCriterion, singleCorrect, incorrect) =>
         new MisCalibration2(pars, qhts, splitSeed, hs, he, fold, cost, eval, validity, Math.abs((1 - validity) - eval))
     }
-    .groupBy("pars", "qhts", "splitSeed", "hs", "he", "fold", "cost").agg(sum("errorRate") as "errorRate")
-    .repartition(1).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder+"miscalibration")
+      .groupBy("pars", "qhts", "splitSeed", "hs", "he", "fold", "cost").agg(sum("errorRate") as "errorRate")
+      .repartition(1).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder + "miscalibration")
+
     println("\nSaved miscalibration for: " + inputFile.split("/").last)
 
     // miscalibration per label
     validityPerLabel.map {
-      case ValidityPerLabel(pars, qhts, label, splitSeed, hs, he, fold, cost, eval, validity, numberCriterion, mCriterion, excessCriterion, singleCorrect,incorrect) =>
+      case ValidityPerLabel(pars, qhts, label, splitSeed, hs, he, fold, cost, eval, validity, numberCriterion, mCriterion, excessCriterion, singleCorrect, incorrect) =>
         new MisCalibrationPerLabel(pars, qhts, label, splitSeed, hs, he, fold, cost, eval, validity, Math.abs((1 - validity) - eval))
     }
-    .groupBy("pars", "qhts", "label", "splitSeed", "hs", "he", "fold", "cost").agg(sum("errorRate") as "errorRate")
-    .repartition(1).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder+"miscalibrationPerLabel")
+      .groupBy("pars", "qhts", "label", "splitSeed", "hs", "he", "fold", "cost").agg(sum("errorRate") as "errorRate")
+      .repartition(1).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder + "miscalibrationPerLabel")
+
     println("\nSaved miscalibration per label for: " + inputFile.split("/").last)
 
-    
-    /*
   */
 
     sc.stop()
