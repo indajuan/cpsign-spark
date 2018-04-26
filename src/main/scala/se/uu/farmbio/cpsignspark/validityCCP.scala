@@ -115,6 +115,7 @@ object validityCCP {
     import org.apache.spark.sql.expressions.scalalang.typed
 
     def read(resource: String): RDD[CP] = {
+      println("Reading files\n")
       val rdd = spark.sparkContext.textFile(resource)
       val headerColumns = rdd.first()
       rdd.filter(row => row != headerColumns)
@@ -128,7 +129,8 @@ object validityCCP {
         line(7).toDouble, line(8).toDouble, line(9).toDouble)
     }
 
-    def makePredictionRegions(rdd: RDD[CP], epsilon: Double): RDD[PredictionRegion] =
+    def makePredictionRegions(rdd: RDD[CP], epsilon: Double): RDD[PredictionRegion] = {
+      
       rdd.map(r => {
         var region = Set.empty[String]
         if (r.p0 > epsilon) region += "-1"
@@ -142,10 +144,12 @@ object validityCCP {
           r.folds, r.cost, r.p0, r.p1, epsilon, region.toList.mkString(","), regionSize, valid,
           fuzziness, excess, r.p0 + r.p1, singleCorrect)
       })
+      }
 
     //val ds = spark.createDataset(rdd)
 
     def makePerformanceEDependent(ds: Dataset[PredictionRegion]): (Dataset[PerformanceEDependent], Dataset[PerformanceEDependentLabel]) = {
+      
       val eDependent = ds.groupByKey(r => (r.qhts, r.splitSeed, r.heightStart,
         r.heightEnd, r.folds, r.cost, r.eval))
         .agg(
@@ -171,6 +175,7 @@ object validityCCP {
     }
 
     def makePerformanceEIndependent(ds: Dataset[PredictionRegion]): (Dataset[PerformanceEIndependent], Dataset[PerformanceEIndependentLabel]) = {
+      
       val eIndependent = ds.groupByKey(r => (r.qhts, r.splitSeed, r.heightStart,
         r.heightEnd, r.folds, r.cost))
         .agg(
@@ -194,6 +199,7 @@ object validityCCP {
     }
 
     def makeMiscalibration(ds: Dataset[PerformanceEDependent]) = {
+      
       val miscal = ds.map {
         case PerformanceEDependent(qhts, splitSeed, heightStart, heightEnd, folds, cost, eval, regionSize, valid, excess, singleCorrect) =>
           new Miscalibration(qhts, splitSeed, heightStart, heightEnd, folds, cost, 1 - valid - eval)
@@ -207,6 +213,7 @@ object validityCCP {
     }
 
     def makeMiscalibrationLabel(ds: Dataset[PerformanceEDependentLabel]) = {
+      
       val miscal = ds.map {
         case PerformanceEDependentLabel(qhts, label, splitSeed, heightStart, heightEnd, folds, cost, eval, regionSize, valid, excess, singleCorrect) =>
           new MiscalibrationLabel(qhts, label, splitSeed, heightStart, heightEnd, folds, cost, 1 - valid - eval)
@@ -219,8 +226,10 @@ object validityCCP {
         .orderBy("splitSeed", "heightStart", "heightEnd", "folds", "cost")
     }
 
-    val predictions = read(inputFile + "*.csv")
-
+    val predictions = read(inputFile + "*.csv.gz").persist()
+    println("Files read")
+    
+    println("making perfromance e-dependent")
     val performanceEpsilonDependent = epsilon.map {
       case e =>
         val predictionRegionEDependent = makePredictionRegions(predictions, e)
@@ -231,25 +240,31 @@ object validityCCP {
     val (performanceEDependent, performanceEDependentLabel) = performanceEpsilonDependent
       .reduce((r, s) => (r._1.union(s._1), r._2.union(s._2)))
 
+    println("persisting perfromance e-dependent")  
     performanceEDependent.persist()
     performanceEDependentLabel.persist()
 
+    println("making perfromance e-independent")
     val predictionRegionEIndependent = makePredictionRegions(predictions, -1)
     val (performanceEIndependent, performanceEIndependentLabel) = makePerformanceEIndependent(
       spark.createDataset(predictionRegionEIndependent))
 
+    println("making miscalibration")  
     val misCalibration = makeMiscalibration(performanceEDependent)
     val misCalibrationLabel = makeMiscalibrationLabel(performanceEDependentLabel)
 
     performanceEDependent.repartition(1).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder + "performanceE")
+    println("Saved: " + outputFolder + "performanceE\n")
     performanceEDependentLabel.repartition(1).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder + "performanceEPerLabel")
+    println("Saved: " + outputFolder + "performanceEPerLabel\n")
     performanceEIndependent.repartition(1).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder + "efficiency")
+    println("Saved: " + outputFolder + "efficiency\n")
     performanceEIndependentLabel.repartition(1).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder + "efficiencyPerLabel")
+    println("Saved: " + outputFolder + "efficiencyPerLabel\n")
     misCalibration.repartition(1).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder + "miscalibration")
+    println("Saved: " + outputFolder + "miscalibration\n")
     misCalibrationLabel.repartition(1).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder + "miscalibrationPerLabel")
-    
-
-    
+    println("Saved: " + outputFolder + "miscalibrationPerLabel\n")
 
   }
 
