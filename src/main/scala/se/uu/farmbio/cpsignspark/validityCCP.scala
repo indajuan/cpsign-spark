@@ -7,6 +7,8 @@ import org.apache.spark.sql.Row
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.Dataset
+import org.apache.spark.storage.StorageLevel
+
 
 import scopt.OptionParser
 
@@ -19,6 +21,7 @@ object validityCCP {
     swiftOpenstack: String = "none",
     minEpsilon:     Double = 0,
     nEpsilon:       Int    = 10,
+    numberOfSplits: Int      = 1,
     maxEpsilon:     Double = 1)
 
   def main(args: Array[String]) {
@@ -32,6 +35,12 @@ object validityCCP {
         .required()
         .text("predictionFiles")
         .action((x, c) => c.copy(inputFolder = x))
+        opt[Int]("numberOfSplits")
+        .validate(x =>
+          if (x > 0) success
+          else failure("Option must be >0"))
+        .text("NumberOfSplitsForRDDofSDF")
+        .action((x, c) => c.copy(numberOfSplits = x))
       opt[String]("outputFolder")
         .required()
         .text("PathToOutputPredictionfiles")
@@ -78,7 +87,8 @@ object validityCCP {
     val nEpsilon = params.nEpsilon
     val minEpsilon = params.minEpsilon
     val maxEpsilon = params.maxEpsilon
-    val r = 10000000
+    val r = 10000
+    val numberOfSplits = params.numberOfSplits
 
     val conf = new SparkConf().setAppName("validity")
     if (sparkMaster == "local") conf.setMaster("local")
@@ -116,7 +126,7 @@ object validityCCP {
 
     def read(resource: String): RDD[CP] = {
       println("Reading files\n")
-      val rdd = spark.sparkContext.textFile(resource)
+      val rdd = spark.sparkContext.textFile(resource,numberOfSplits)
       val headerColumns = rdd.first()
       rdd.filter(row => row != headerColumns)
         .map(_.split(",").to[List])
@@ -130,7 +140,7 @@ object validityCCP {
     }
 
     def makePredictionRegions(rdd: RDD[CP], epsilon: Double): RDD[PredictionRegion] = {
-      
+
       rdd.map(r => {
         var region = Set.empty[String]
         if (r.p0 > epsilon) region += "-1"
@@ -144,12 +154,12 @@ object validityCCP {
           r.folds, r.cost, r.p0, r.p1, epsilon, region.toList.mkString(","), regionSize, valid,
           fuzziness, excess, r.p0 + r.p1, singleCorrect)
       })
-      }
+    }
 
     //val ds = spark.createDataset(rdd)
 
-    def makePerformanceEDependent(ds: Dataset[PredictionRegion]): (Dataset[PerformanceEDependent], Dataset[PerformanceEDependentLabel]) = {
-      
+    def makePerformanceEDependent(ds: Dataset[PredictionRegion]):Dataset[PerformanceEDependent]= {
+
       val eDependent = ds.groupByKey(r => (r.qhts, r.splitSeed, r.heightStart,
         r.heightEnd, r.folds, r.cost, r.eval))
         .agg(
@@ -160,8 +170,14 @@ object validityCCP {
         .map(z => PerformanceEDependent(z._1._1, z._1._2, z._1._3, z._1._4,
           z._1._5, z._1._6, z._1._7, z._2, z._3, z._4, z._5))
         .orderBy("splitSeed", "heightStart", "heightEnd", "folds", "cost", "eval")
+        
+        eDependent
+    }
+    
+    
+    def makePerformanceEDependent2(ds: Dataset[PredictionRegion]): Dataset[PerformanceEDependentLabel] = {
 
-      val eDependentLabel = ds.groupByKey(r => (r.qhts, r.label, r.splitSeed, r.heightStart,
+    val eDependentLabel = ds.groupByKey(r => (r.qhts, r.label, r.splitSeed, r.heightStart,
         r.heightEnd, r.folds, r.cost, r.eval))
         .agg(
           round(typed.avg[PredictionRegion](_.regionSize), 5).as[Double],
@@ -171,11 +187,12 @@ object validityCCP {
         .map(z => PerformanceEDependentLabel(z._1._1, z._1._2, z._1._3, z._1._4,
           z._1._5, z._1._6, z._1._7, z._1._8, z._2, z._3, z._4, z._5))
         .orderBy("splitSeed", "heightStart", "heightEnd", "folds", "cost", "eval")
-      (eDependent, eDependentLabel)
+        
+        eDependentLabel
     }
-
+    
     def makePerformanceEIndependent(ds: Dataset[PredictionRegion]): (Dataset[PerformanceEIndependent], Dataset[PerformanceEIndependentLabel]) = {
-      
+
       val eIndependent = ds.groupByKey(r => (r.qhts, r.splitSeed, r.heightStart,
         r.heightEnd, r.folds, r.cost))
         .agg(
@@ -198,74 +215,40 @@ object validityCCP {
 
     }
 
-    def makeMiscalibration(ds: Dataset[PerformanceEDependent]) = {
-      
-      val miscal = ds.map {
-        case PerformanceEDependent(qhts, splitSeed, heightStart, heightEnd, folds, cost, eval, regionSize, valid, excess, singleCorrect) =>
-          new Miscalibration(qhts, splitSeed, heightStart, heightEnd, folds, cost, 1 - valid - eval)
-      }
-      miscal.groupByKey(r => (r.qhts, r.splitSeed, r.heightStart, r.heightEnd, r.folds, r.cost))
-        .agg(
-          round(typed.avg[Miscalibration](_.miscalibration), 5).as[Double])
-        .map(z => Miscalibration(z._1._1, z._1._2, z._1._3, z._1._4,
-          z._1._5, z._1._6, z._2))
-        .orderBy("splitSeed", "heightStart", "heightEnd", "folds", "cost")
-    }
-
-    def makeMiscalibrationLabel(ds: Dataset[PerformanceEDependentLabel]) = {
-      
-      val miscal = ds.map {
-        case PerformanceEDependentLabel(qhts, label, splitSeed, heightStart, heightEnd, folds, cost, eval, regionSize, valid, excess, singleCorrect) =>
-          new MiscalibrationLabel(qhts, label, splitSeed, heightStart, heightEnd, folds, cost, 1 - valid - eval)
-      }
-      miscal.groupByKey(r => (r.qhts, r.label, r.splitSeed, r.heightStart, r.heightEnd, r.folds, r.cost))
-        .agg(
-          round(typed.avg[MiscalibrationLabel](_.miscalibration), 5).as[Double])
-        .map(z => MiscalibrationLabel(z._1._1, z._1._2, z._1._3, z._1._4,
-          z._1._5, z._1._6, z._1._7, z._2))
-        .orderBy("splitSeed", "heightStart", "heightEnd", "folds", "cost")
-    }
-
-    val predictions = read(inputFile + "*.csv.gz").persist()
-    println("Files read")
     
-    println("making perfromance e-dependent")
-    val performanceEpsilonDependent = epsilon.map {
-      case e =>
-        val predictionRegionEDependent = makePredictionRegions(predictions, e)
-        val (performanceEDependent, performanceEDependentLabel) = makePerformanceEDependent(
-          spark.createDataset(predictionRegionEDependent))
-        (performanceEDependent, performanceEDependentLabel)
-    }
-    val (performanceEDependent, performanceEDependentLabel) = performanceEpsilonDependent
-      .reduce((r, s) => (r._1.union(s._1), r._2.union(s._2)))
-
-    println("persisting perfromance e-dependent")  
-    performanceEDependent.persist()
-    performanceEDependentLabel.persist()
-
+    val predictions = read(inputFile ).repartition(numberOfSplits).persist(StorageLevel.DISK_ONLY)
+    
     println("making perfromance e-independent")
     val predictionRegionEIndependent = makePredictionRegions(predictions, -1)
     val (performanceEIndependent, performanceEIndependentLabel) = makePerformanceEIndependent(
       spark.createDataset(predictionRegionEIndependent))
-
-    println("making miscalibration")  
-    val misCalibration = makeMiscalibration(performanceEDependent)
-    val misCalibrationLabel = makeMiscalibrationLabel(performanceEDependentLabel)
-
-    performanceEDependent.repartition(1).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder + "performanceE")
-    println("Saved: " + outputFolder + "performanceE\n")
-    performanceEDependentLabel.repartition(1).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder + "performanceEPerLabel")
-    println("Saved: " + outputFolder + "performanceEPerLabel\n")
-    performanceEIndependent.repartition(1).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder + "efficiency")
+    performanceEIndependent.repartition(1).write.format("csv").option("header", "true").option("compression", "gzip").mode("overwrite").save(outputFolder + "efficiency")
     println("Saved: " + outputFolder + "efficiency\n")
-    performanceEIndependentLabel.repartition(1).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder + "efficiencyPerLabel")
+    performanceEIndependentLabel.repartition(1).write.format("csv").option("header", "true").option("compression", "gzip").mode("overwrite").save(outputFolder + "efficiencyPerLabel")
     println("Saved: " + outputFolder + "efficiencyPerLabel\n")
-    misCalibration.repartition(1).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder + "miscalibration")
-    println("Saved: " + outputFolder + "miscalibration\n")
-    misCalibrationLabel.repartition(1).write.format("csv").option("header", "true").mode("overwrite").save(outputFolder + "miscalibrationPerLabel")
-    println("Saved: " + outputFolder + "miscalibrationPerLabel\n")
 
+    println("making perfromance e-dependent")
+    
+    
+    val performanceEpsilonDependent = epsilon.map {
+      case e =>
+        val predictionRegionEDependent = makePredictionRegions(predictions, e).persist()
+        val performanceEDependent = makePerformanceEDependent(
+          spark.createDataset(predictionRegionEDependent))
+        
+        performanceEDependent.repartition(1).write.format("csv").option("header", "true").option("compression", "gzip").mode("overwrite").save(outputFolder + "performanceE" + e)
+        println("Saved: " + outputFolder + "performanceE: " + e ) 
+        
+    
+        val performanceEDependentLabel = makePerformanceEDependent2(
+          spark.createDataset(predictionRegionEDependent))
+          
+        performanceEDependentLabel.repartition(1).write.format("csv").option("header", "true").mode("overwrite").option("compression", "gzip").save(outputFolder + "performanceEPerLabel" + e)
+        
+        println("Saved: " + outputFolder + "performanceEPerLabel: " + e)
+        predictionRegionEDependent.unpersist()
+    }
+     
   }
 
   case class PredictionRegion(
